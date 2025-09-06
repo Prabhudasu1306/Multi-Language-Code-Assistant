@@ -1,4 +1,3 @@
-import os
 import json
 import re
 
@@ -14,7 +13,7 @@ except Exception:
     requests = None
 
 DEFAULT_API = "http://localhost:11434"
-DEFAULT_MODEL = "mistral"  
+DEFAULT_MODEL = "mistral"
 
 LANGUAGE_EXTENSIONS = {
     "python": "py",
@@ -51,7 +50,8 @@ CODE_START_PATTERNS = {
     "php": ["<?php", "function ", "class ", "namespace ", "use "],
     "swift": ["func ", "class ", "struct ", "enum ", "import ", "var ", "let "],
     "kotlin": ["fun ", "class ", "import ", "val ", "var ", "object "],
-    "scala": ["def ", "class ", "object ", "import ", "val ", "var "]
+    "scala": ["def ", "class ", "object ", "import ", "val ", "var "],
+    "sql": ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "WITH"]
 }
 
 def call_ollama_python_generate(model: str, prompt: str):
@@ -64,9 +64,7 @@ def call_ollama_python_generate(model: str, prompt: str):
         return client.generate(model=model, prompt=prompt)
     raise RuntimeError("No supported generate method in ollama client")
 
-
 def call_ollama_http_generate(model: str, prompt: str):
-    """Fallback to HTTP API if Python SDK not available"""
     if requests is None:
         raise RuntimeError("requests not installed")
     url = f"{DEFAULT_API}/api/generate"
@@ -78,9 +76,7 @@ def call_ollama_http_generate(model: str, prompt: str):
     except ValueError:
         return resp.text
 
-
 def detect_language(text):
-    """Detect programming language from text"""
     text_lower = text.lower()
     
     for lang, patterns in CODE_START_PATTERNS.items():
@@ -92,11 +88,9 @@ def detect_language(text):
         if f".{ext}" in text_lower:
             return lang
     
-    return "python"  
-
+    return "python"
 
 def clean_response(resp, language=None):
-    """Extract only clean text/code from Ollama response with proper indentation"""
     if isinstance(resp, dict):
         text = resp.get("response") or resp.get("text") or ""
     else:
@@ -110,12 +104,12 @@ def clean_response(resp, language=None):
     try:
         text = bytes(text, "utf-8").decode("unicode_escape")
     except:
-        pass  
+        pass
     
     if "```" in text:
         parts = text.split("```")
         if len(parts) >= 2:
-            text = parts[1]  
+            text = parts[1]
             if any(text.startswith(lang) for lang in LANGUAGE_EXTENSIONS.keys()):
                 for lang in LANGUAGE_EXTENSIONS.keys():
                     if text.startswith(lang):
@@ -156,7 +150,7 @@ def clean_response(resp, language=None):
     if lines:
         min_indent = float('inf')
         for line in lines:
-            if line.strip():  
+            if line.strip():
                 indent = len(line) - len(line.lstrip())
                 min_indent = min(min_indent, indent)
         
@@ -166,10 +160,7 @@ def clean_response(resp, language=None):
     
     return text, language
 
-
 def generate_text(model: str, user_prompt: str, task: str, language: str):
-    """Wrapper that calls Ollama and cleans output"""
-
     system_instructions = {
         "python": "Ensure the code has proper Python indentation (4 spaces).",
         "java": "Ensure the code follows Java conventions with proper braces and indentation.",
@@ -183,12 +174,15 @@ def generate_text(model: str, user_prompt: str, task: str, language: str):
         "php": "Ensure the code follows PHP conventions with proper <?php tags.",
         "swift": "Ensure the code follows Swift conventions.",
         "kotlin": "Ensure the code follows Kotlin conventions.",
-        "scala": "Ensure the code follows Scala conventions."
+        "scala": "Ensure the code follows Scala conventions.",
+        "sql": "Ensure the SQL query follows proper syntax and conventions.",
+        "html": "Ensure the HTML follows proper semantic structure.",
+        "css": "Ensure the CSS follows modern styling conventions.",
+        "bash": "Ensure the shell script follows proper bash syntax."
     }
     
     lang_instruction = system_instructions.get(language.lower(), "Ensure the code has proper indentation and follows language conventions.")
 
-    
     system_instruction = (
         f"IMPORTANT: You are a {language} coding assistant. "
         "You MUST return ONLY the complete raw code without any explanation, comments, or markdown fences. "
@@ -215,8 +209,13 @@ def generate_text(model: str, user_prompt: str, task: str, language: str):
         else:
             r = call_ollama_http_generate(model, final_prompt)
 
-        if isinstance(r, dict) and "response" in r:
-            text = r["response"]
+        if isinstance(r, dict):
+            if 'response' in r:
+                text = r['response']
+            elif 'message' in r and 'content' in r['message']:
+                text = r['message']['content']
+            else:
+                text = str(r)
         else:
             text = str(r)
 
